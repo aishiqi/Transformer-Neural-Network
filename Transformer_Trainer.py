@@ -13,6 +13,7 @@ import argparse
 argparser = argparse.ArgumentParser()
 argparser.add_argument("--checkpoint", type=str)
 argparser.add_argument("--wandb_checkpoint", type=str)
+argparser.add_argument("--evaluation_mode", type=bool)
 args = argparser.parse_args()
 
 
@@ -52,7 +53,7 @@ def build_vacab(sentences, leading_tokens = [], trailing_tokens = []):
     return vacab, index_to_word
 
 def load_or_build_vacab(vocab_file, sentences, leading_tokens = [], trailing_tokens = []):
-    if os.path.exists(vocab_file):
+    if False and os.path.exists(vocab_file):
         print("Loading vocabulary from {}".format(vocab_file))
         cache = json.load(open(vocab_file))
         vocabulary = cache["vocabulary"]
@@ -64,7 +65,7 @@ def load_or_build_vacab(vocab_file, sentences, leading_tokens = [], trailing_tok
             "vocabulary": vocabulary,
             "index_to_word": index_to_word
         }
-        # open(vocab_file, "w").write(json.dumps(cache, indent=2))
+        open(vocab_file, "w").write(json.dumps(cache, indent=2))
     return vocabulary, index_to_word
 
 
@@ -252,87 +253,86 @@ wandb.config = {
     "num_epochs" : num_epochs
 }
 
-previous_batch_time = time.time()
-for epoch in range(start_epoch, num_epochs):
-    print(f"Epoch {epoch}")
-    iterator = iter(train_loader)
-    for batch_num, batch in enumerate(iterator):
-        transformer.train()
-        eng_batch, ch_batch = batch
-        encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(eng_batch,
-                                                                                                              ch_batch)
-        optim.zero_grad()
-        ch_predictions = transformer(eng_batch,
-                                     ch_batch,
-                                     encoder_self_attention_mask.to(device),
-                                     decoder_self_attention_mask.to(device),
-                                     decoder_cross_attention_mask.to(device),
-                                     enc_start_token=False,
-                                     enc_end_token=False,
-                                     dec_start_token=True,
-                                     dec_end_token=True)
-        labels = transformer.decoder.sentence_embedding.batch_tokenize(ch_batch, start_token=False, end_token=True)
-        loss = criterian(
-            ch_predictions.view(-1, ch_vocab_size).to(device),
-            labels.view(-1).to(device)
-        ).to(device)
-        valid_indicies = torch.where(labels.view(-1) == chinese_to_index[PADDING_TOKEN], False, True)
-        loss = loss.sum() / valid_indicies.sum()
-        loss.backward()
-        optim.step()
-        # train_losses.append(loss.item())
-        if batch_num % 100 == 0:
-            delta_time = time.time() - previous_batch_time
-            previous_batch_time = time.time()
-            print(f"Iteration {batch_num} / {len(train_loader)}, Loss: {loss.item()}, 100 Batch Time: {delta_time}")
-            print(f"English: {eng_batch[0]}")
-            print(f"Chinese Translation: {ch_batch[0]}")
-            wandb.log({"loss": loss})
-            ch_sentence_predicted = torch.argmax(ch_predictions[0], axis=1)
-            predicted_sentence = ""
-            for idx in ch_sentence_predicted:
-                if idx == chinese_to_index[END_TOKEN]:
-                    break
-                predicted_sentence += index_to_chinese[idx.item()]
-            print(f"Chinese Prediction: {predicted_sentence}")
+def train():
+    previous_batch_time = time.time()
+    for epoch in range(start_epoch, num_epochs):
+        print(f"Epoch {epoch}")
+        iterator = iter(train_loader)
+        for batch_num, batch in enumerate(iterator):
+            transformer.train()
+            eng_batch, ch_batch = batch
+            encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(eng_batch,
+                                                                                                                  ch_batch)
+            optim.zero_grad()
+            ch_predictions = transformer(eng_batch,
+                                         ch_batch,
+                                         encoder_self_attention_mask.to(device),
+                                         decoder_self_attention_mask.to(device),
+                                         decoder_cross_attention_mask.to(device),
+                                         enc_start_token=False,
+                                         enc_end_token=False,
+                                         dec_start_token=True,
+                                         dec_end_token=True)
+            labels = transformer.decoder.sentence_embedding.batch_tokenize(ch_batch, start_token=False, end_token=True)
+            loss = criterian(
+                ch_predictions.view(-1, ch_vocab_size).to(device),
+                labels.view(-1).to(device)
+            ).to(device)
+            valid_indicies = torch.where(labels.view(-1) == chinese_to_index[PADDING_TOKEN], False, True)
+            loss = loss.sum() / valid_indicies.sum()
+            loss.backward()
+            optim.step()
+            # train_losses.append(loss.item())
+            if batch_num % 100 == 0:
+                delta_time = time.time() - previous_batch_time
+                previous_batch_time = time.time()
+                print(f"Iteration {batch_num} / {len(train_loader)}, Loss: {loss.item()}, 100 Batch Time: {delta_time}")
+                print(f"English: {eng_batch[0]}")
+                print(f"Chinese Translation: {ch_batch[0]}")
+                wandb.log({"loss": loss})
+                ch_sentence_predicted = torch.argmax(ch_predictions[0], axis=1)
+                predicted_sentence = ""
+                for idx in ch_sentence_predicted:
+                    if idx == chinese_to_index[END_TOKEN]:
+                        break
+                    predicted_sentence += index_to_chinese[idx.item()]
+                print(f"Chinese Prediction: {predicted_sentence}")
 
-            transformer.eval()
-            ch_sentence = ("",)
-            eng_sentence = ("should we go to the mall?",)
-            for word_counter in range(max_sequence_length):
-                encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(
-                    eng_sentence, ch_sentence)
-                predictions = transformer(eng_sentence,
-                                          ch_sentence,
-                                          encoder_self_attention_mask.to(device),
-                                          decoder_self_attention_mask.to(device),
-                                          decoder_cross_attention_mask.to(device),
-                                          enc_start_token=False,
-                                          enc_end_token=False,
-                                          dec_start_token=True,
-                                          dec_end_token=False)
-                next_token_prob_distribution = predictions[0][word_counter]  # not actual probs
-                next_token_index = torch.argmax(next_token_prob_distribution).item()
-                next_token = index_to_chinese[next_token_index]
-                ch_sentence = (ch_sentence[0] + next_token,)
-                if next_token == END_TOKEN:
-                    break
+                transformer.eval()
+                ch_sentence = ("",)
+                eng_sentence = ("should we go to the mall?",)
+                for word_counter in range(max_sequence_length):
+                    encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(
+                        eng_sentence, ch_sentence)
+                    predictions = transformer(eng_sentence,
+                                              ch_sentence,
+                                              encoder_self_attention_mask.to(device),
+                                              decoder_self_attention_mask.to(device),
+                                              decoder_cross_attention_mask.to(device),
+                                              enc_start_token=False,
+                                              enc_end_token=False,
+                                              dec_start_token=True,
+                                              dec_end_token=False)
+                    next_token_prob_distribution = predictions[0][word_counter]  # not actual probs
+                    next_token_index = torch.argmax(next_token_prob_distribution).item()
+                    next_token = index_to_chinese[next_token_index]
+                    ch_sentence = (ch_sentence[0] + next_token,)
+                    if next_token == END_TOKEN:
+                        break
 
-            print(f"Evaluation translation (should we go to the mall?) : {ch_sentence}")
-            print("-------------------------------------------")
+                print(f"Evaluation translation (should we go to the mall?) : {ch_sentence}")
+                print("-------------------------------------------")
 
-    print("Saving Checkpoint for epoch {}...".format(epoch))
-    torch.save({'epoch': epoch,
-                'model_state_dict': transformer.state_dict(),
-                'optimizer_state_dict': optim.state_dict()},
-               # 'checkpoints/model_{}.pth'.format(epoch)
-               'checkpoints/model.pth'
-               )
-    artifact = wandb.Artifact('model', type='model', metadata={"epoch":epoch})
-    artifact.add_file('checkpoints/model.pth')
-    run.log_artifact(artifact)
-
-transformer.eval()
+        print("Saving Checkpoint for epoch {}...".format(epoch))
+        torch.save({'epoch': epoch,
+                    'model_state_dict': transformer.state_dict(),
+                    'optimizer_state_dict': optim.state_dict()},
+                   # 'checkpoints/model_{}.pth'.format(epoch)
+                   'checkpoints/model.pth'
+                   )
+        artifact = wandb.Artifact('model', type='model', metadata={"epoch":epoch})
+        artifact.add_file('checkpoints/model.pth')
+        run.log_artifact(artifact)
 
 
 def translate(eng_sentence):
@@ -353,11 +353,48 @@ def translate(eng_sentence):
         next_token_prob_distribution = predictions[0][word_counter]
         next_token_index = torch.argmax(next_token_prob_distribution).item()
         next_token = index_to_chinese[next_token_index]
-        ch_sentence = (ch_sentence[0] + next_token,)
         if next_token == END_TOKEN:
             break
+        ch_sentence = (ch_sentence[0] + next_token,)
     return ch_sentence[0]
 
+def evaluate():
+    transformer.eval()
+    eval_eng_sentences = [
+        "what should we do when the day starts?",
+        "should we go to the mall?",
+        "what is the time?",
+        "what is the weather like?",
+        "how are you?",
+        "what is the meaning of life?",
+        "I am going to the store",
+        "I will be back soon",
+        "My name is Shiqi Ai",
+        "I am a student",
+        "I am a software engineer",
+        "I am a data scientist",
+        "I am a machine learning engineer",
+        "I am a deep learning engineer",
+        "I am a computer vision engineer",
+        "I am a natural language processing engineer",
+        "I like to play basketball",
+        "I like to play soccer",
+    ]
 
-translation = translate("what should we do when the day starts?")
-print(translation)
+    eval_translations = []
+    for eng_sentence in eval_eng_sentences:
+        eng_sentence = eng_sentence.lower()
+        translation = translate(eng_sentence)
+        eval_translations.append(translation)
+
+    for eng_sentence, translation in zip(eval_eng_sentences, eval_translations):
+        print(eng_sentence)
+        print(translation)
+        print("-------------------------------------------")
+
+
+if __name__ == "__main__":
+    if args.evaluation_mode:
+        evaluate()
+    else:
+        train()

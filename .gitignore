@@ -3,3 +3,4 @@ __pycache__/
 dataset/en_kn
 wandb/
 artifacts/
+checkpoints/
