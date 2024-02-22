@@ -118,9 +118,9 @@ chinese_to_index, index_to_chinese = load_or_build_vacab("cache/chinese_vocabula
 english_to_index, index_to_english = load_or_build_vacab("cache/english_vocabulary.txt", english_sentences, leading_tokens, trailing_tokens)
 
 
-d_model = 1024
+d_model = 512
 batch_size = 30
-ffn_hidden = 4096
+ffn_hidden = 2048
 num_heads = 8
 drop_prob = 0.1
 num_layers = 4
