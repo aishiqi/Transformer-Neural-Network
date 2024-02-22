@@ -1,3 +1,5 @@
+import time
+import shutil
 from transformer import Transformer # this is the transformer.py file
 import torch
 import numpy as np
@@ -5,6 +7,14 @@ import json
 import os
 from tqdm import tqdm
 import wandb
+import argparse
+
+
+argparser = argparse.ArgumentParser()
+argparser.add_argument("--checkpoint", type=str)
+argparser.add_argument("--wandb_checkpoint", type=str)
+args = argparser.parse_args()
+
 
 run = wandb.init(
     project="Transformer-Translation",
@@ -112,7 +122,7 @@ batch_size = 30
 ffn_hidden = 2048
 num_heads = 8
 drop_prob = 0.1
-num_layers = 1
+num_layers = 2
 ch_vocab_size = len(chinese_to_index)
 
 
@@ -166,13 +176,36 @@ from torch import nn
 criterian = nn.CrossEntropyLoss(ignore_index=chinese_to_index[PADDING_TOKEN],
                                 reduction='none')
 
-# When computing the loss, we are ignoring cases when the label is the padding token
-for params in transformer.parameters():
-    if params.dim() > 1:
-        nn.init.xavier_uniform_(params)
+
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+start_epoch = 0
+
+checkpoint_file_path = None
+if args.wandb_checkpoint:
+    print(f"Loading checkpoint from wandb {args.wandb_checkpoint}")
+    artifact = run.use_artifact(f'aishiqi/{run.project}/{args.wandb_checkpoint}', type='model')
+    artifact_dir = artifact.download()
+    checkpoint_file_path = os.path.join(artifact_dir, 'model.pth')
+elif args.checkpoint:
+    print(f"Loading checkpoint from {args.checkpoint}")
+    checkpoint_file_path = f"checkpoints/{args.checkpoint}"
+
+if checkpoint_file_path:
+    checkpoint = torch.load(checkpoint_file_path)
+    transformer.load_state_dict(checkpoint['model_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1
+    transformer.to(device)
+else:
+    # When computing the loss, we are ignoring cases when the label is the padding token
+    for params in transformer.parameters():
+        if params.dim() > 1:
+            nn.init.xavier_uniform_(params)
 
 optim = torch.optim.Adam(transformer.parameters(), lr=1e-4)
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+if checkpoint_file_path:
+    optim.load_state_dict(checkpoint['optimizer_state_dict'])
+
+
 
 NEG_INFTY = -1e9
 
@@ -205,7 +238,7 @@ def create_masks(eng_batch, ch_batch):
 transformer.train()
 transformer.to(device)
 total_loss = 0
-num_epochs = 20
+num_epochs = 200
 
 wandb.config = {
     "max_sequence_length" : max_sequence_length,
@@ -219,7 +252,8 @@ wandb.config = {
     "num_epochs" : num_epochs
 }
 
-for epoch in range(num_epochs):
+previous_batch_time = time.time()
+for epoch in range(start_epoch, num_epochs):
     print(f"Epoch {epoch}")
     iterator = iter(train_loader)
     for batch_num, batch in enumerate(iterator):
@@ -248,7 +282,9 @@ for epoch in range(num_epochs):
         optim.step()
         # train_losses.append(loss.item())
         if batch_num % 100 == 0:
-            print(f"Iteration {batch_num} : {loss.item()}")
+            delta_time = time.time() - previous_batch_time
+            previous_batch_time = time.time()
+            print(f"Iteration {batch_num} / {len(train_loader)}, Loss: {loss.item()}, 100 Batch Time: {delta_time}")
             print(f"English: {eng_batch[0]}")
             print(f"Chinese Translation: {ch_batch[0]}")
             wandb.log({"loss": loss})
@@ -284,6 +320,17 @@ for epoch in range(num_epochs):
 
             print(f"Evaluation translation (should we go to the mall?) : {ch_sentence}")
             print("-------------------------------------------")
+
+    print("Saving Checkpoint for epoch {}...".format(epoch))
+    torch.save({'epoch': epoch,
+                'model_state_dict': transformer.state_dict(),
+                'optimizer_state_dict': optim.state_dict()},
+               # 'checkpoints/model_{}.pth'.format(epoch)
+               'checkpoints/model.pth'
+               )
+    artifact = wandb.Artifact('model', type='model', metadata={"epoch":epoch})
+    artifact.add_file('checkpoints/model.pth')
+    run.log_artifact(artifact)
 
 transformer.eval()
 
