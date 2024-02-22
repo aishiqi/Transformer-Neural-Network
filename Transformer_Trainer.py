@@ -251,7 +251,7 @@ for epoch in range(num_epochs):
             print(f"Iteration {batch_num} : {loss.item()}")
             print(f"English: {eng_batch[0]}")
             print(f"Chinese Translation: {ch_batch[0]}")
-            wandb.log({"batch_num": batch_num, "loss": loss})
+            wandb.log({"loss": loss})
             ch_sentence_predicted = torch.argmax(ch_predictions[0], axis=1)
             predicted_sentence = ""
             for idx in ch_sentence_predicted:
