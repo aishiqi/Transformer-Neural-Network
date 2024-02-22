@@ -1,5 +1,4 @@
 import time
-import shutil
 from transformer import Transformer # this is the transformer.py file
 import torch
 import numpy as np
@@ -8,7 +7,8 @@ import os
 from tqdm import tqdm
 import wandb
 import argparse
-
+from torch import nn
+from torch.utils.data import Dataset, DataLoader
 
 argparser = argparse.ArgumentParser()
 argparser.add_argument("--checkpoint", type=str)
@@ -140,9 +140,7 @@ transformer = Transformer(d_model,
                           END_TOKEN,
                           PADDING_TOKEN)
 
-transformer
 
-from torch.utils.data import Dataset, DataLoader
 
 
 class TextDataset(Dataset):
@@ -162,17 +160,9 @@ dataset = TextDataset(english_sentences, chinese_sentences)
 
 len(dataset)
 
-dataset[1]
-
 train_loader = DataLoader(dataset, batch_size)
 iterator = iter(train_loader)
 
-for batch_num, batch in enumerate(iterator):
-    print(batch)
-    if batch_num > 3:
-        break
-
-from torch import nn
 
 criterian = nn.CrossEntropyLoss(ignore_index=chinese_to_index[PADDING_TOKEN],
                                 reduction='none')
