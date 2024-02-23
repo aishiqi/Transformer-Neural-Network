@@ -14,12 +14,14 @@ argparser = argparse.ArgumentParser()
 argparser.add_argument("--checkpoint", type=str)
 argparser.add_argument("--wandb_checkpoint", type=str)
 argparser.add_argument("--evaluation_mode", type=bool)
+argparser.add_argument("--wandb_name", type=str)
 args = argparser.parse_args()
 
 
 run = wandb.init(
     project="Transformer-Translation",
     notes="My Transformer Translation",
+    name=args.wandb_name,
     tags=["Transformer", "Translation"]
 )
 
